@@ -1,16 +1,13 @@
 package ru.sberbank.lab1;
 
-import org.asynchttpclient.AsyncHttpClient;
-import org.asynchttpclient.Response;
-import org.json.JSONArray;
+import org.asynchttpclient.*;
+import org.asynchttpclient.util.HttpConstants;
 import org.json.JSONException;
 import org.json.JSONObject;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.client.RestTemplate;
 
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
@@ -21,8 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
-
-import static java.util.Collections.emptyList;
+import java.util.concurrent.Future;
 
 @RestController
 @RequestMapping("/lab1")
@@ -112,52 +108,52 @@ public class Lab1Controller {
 
     @GetMapping("/weather")
     public List<Double> getWeatherForPeriod(Integer days) {
-        try {
-            return getTemperatureForLastDays(days);
-        } catch (JSONException e) {
-        }
 
-        return emptyList();
-    }
-
-    public List<Double> getTemperatureForLastDays(int days) throws JSONException {
-        List<Double> temps = new ArrayList<>();
-
+        // asynchronously throw requests
+        AsyncHttpClient client = Dsl.asyncHttpClient();
+        List<Future<Response>> responseFutures = new ArrayList<>();
         for (int i = 0; i < days; i++) {
             Long currentDayInSec = Calendar.getInstance().getTimeInMillis() / 1000;
             Long oneDayInSec = 24 * 60 * 60L;
             Long curDateSec = currentDayInSec - i * oneDayInSec;
-            Double curTemp = getTemperatureFromInfo(curDateSec.toString());
-            temps.add(curTemp);
+
+            Future<Response> responseFuture = requestAsyncForOneDay(client, curDateSec.toString());
+            System.out.printf("Requested for day %s\n", curDateSec.toString());
+            responseFutures.add(responseFuture);
         }
 
-        return temps;
+        // gather results for all
+        List<Double> temperatures = new ArrayList<>();
+        for (Future<Response> responseFuture : responseFutures) {
+            try {
+                // blocks here
+                temperatures.add(extractTemperature(responseFuture.get()));
+                System.out.printf("Completed future %s\n", responseFuture.toString());
+            } catch (InterruptedException | ExecutionException | JSONException e) {
+                throw new RuntimeException("Failed", e);
+            }
+        }
+
+        return temperatures;
     }
 
-    public String getTodayWeather(String date) {
-        String obligatoryForecastStart = "https://api.darksky.net/forecast/ac1830efeff59c748d212052f27d49aa/";
-        String LAcoordinates = "34.053044,-118.243750,";
-        String exclude = "exclude=daily";
+    private Future<Response> requestAsyncForOneDay(AsyncHttpClient client, String dateInSeconds) {
+        final String obligatoryForecastStart = "https://api.darksky.net/forecast/ac1830efeff59c748d212052f27d49aa/";
+        final String LAcoordinates = "34.053044,-118.243750,";
+        final String exclude = "exclude=daily";
+        final String url = obligatoryForecastStart + LAcoordinates + dateInSeconds + "?" + exclude;
 
-        RestTemplate restTemplate = new RestTemplate();
-        String fooResourceUrl = obligatoryForecastStart + LAcoordinates + date + "?" + exclude;
-        System.out.println(fooResourceUrl);
-        ResponseEntity<String> response = restTemplate.getForEntity(fooResourceUrl, String.class);
-        String info = response.getBody();
-        System.out.println(info);
-        return info;
+        Request request = new RequestBuilder(HttpConstants.Methods.GET)
+                .setUrl(url)
+                .build();
+
+        return client.executeRequest(request);
     }
 
-    public Double getTemperatureFromInfo(String date) throws JSONException {
-        String info = getTodayWeather(date);
-        Double curTemp = getTemperature(info);
-        return curTemp;
-    }
+    private Double extractTemperature(Response response) throws JSONException {
+        String responseJson = response.getResponseBody();
 
-    public Double getTemperature(String info) throws JSONException {
-        // 1. Постоянная сериализация-десериализация JSON-а требует накладных расходов на парсинг,
-        //    достаточно десериализовать один раз
-        return new JSONObject(info)
+        return new JSONObject(responseJson)
                 .getJSONObject("hourly")
                 .getJSONArray("data")
                 .getJSONObject(0)
