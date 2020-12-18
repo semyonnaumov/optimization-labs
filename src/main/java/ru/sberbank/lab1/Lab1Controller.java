@@ -155,12 +155,13 @@ public class Lab1Controller {
     }
 
     public Double getTemperature(String info) throws JSONException {
-        JSONObject json = new JSONObject(info);
-        String hourly = json.getString("hourly");
-        JSONArray data = new JSONObject(hourly).getJSONArray("data");
-        Double temp = new JSONObject(data.get(0).toString()).getDouble("temperature");
-
-        return temp;
+        // 1. Постоянная сериализация-десериализация JSON-а требует накладных расходов на парсинг,
+        //    достаточно десериализовать один раз
+        return new JSONObject(info)
+                .getJSONObject("hourly")
+                .getJSONArray("data")
+                .getJSONObject(0)
+                .getDouble("temperature");
     }
 }
 
